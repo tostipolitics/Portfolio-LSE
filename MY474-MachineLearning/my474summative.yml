@@ -1,0 +1,11 @@
+name: my474summative
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - numpy==2.4.4
+    - scipy==1.17.1
+    - pandas==2.3.3
+    - scikit-learn==1.8.0

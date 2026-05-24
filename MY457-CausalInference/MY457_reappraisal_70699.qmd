@@ -1,0 +1,943 @@
+---
+title: "Reappraisal of When the Church Votes Left: How Progressive Bishops Supported the Workers’ Party in Brazil"
+subtitle: "MY457 | WT 2026 "
+date: today
+author: "70699"
+format:
+  html:
+    embed-resources: true
+    toc: false
+    include-after-body:
+      text: |
+        <script>
+        document.querySelector('.footnotes h2').textContent = 'References and notes';
+        </script>
+---
+
+```{r setup, include = FALSE}
+# this chunk contains code that sets global options for the entire .Rmd.
+# we use include=FALSE to suppress it from the top of the document, but it will still appear in the appendix.
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE, linewidth=60)
+
+# Install packages and read libraries in one step
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(
+  readr,
+  tidyverse,
+  geobr,
+  rmapshaper,
+  sf,
+  ggplot2,
+  dplyr,
+  tidyr,
+  scales,
+  RColorBrewer,
+  ggpubr,
+  here,
+  xtable,
+  estimatr,
+  broom,
+  modelsummary,
+  kableExtra,
+  gt,
+  webshot2,
+  interflex,
+  grid,
+  gridExtra,
+  purrr
+)
+
+# Set working directory
+main_dir <- here::here()
+
+# Create folder for the resulting Figures and Tables
+if(!dir.exists(file.path(main_dir, "outputs"))){
+  dir.create(file.path(main_dir, "outputs"))
+}
+
+# Create folder for the data used
+if(!dir.exists(file.path(main_dir, "data"))){
+  dir.create(file.path(main_dir, "data"))
+}
+
+ddir <- file.path(main_dir, "outputs")
+
+# Options in R:
+set.seed(1234)
+options(scipen=999)
+
+# Read data
+## Municipal data
+munidata <- readr::read_csv(file.path(main_dir, "data", "munidata.csv"), show_col_types = FALSE)
+
+## Diocese data
+diodata  <- readr::read_csv(file.path(main_dir, "data", "diodata.csv"),  show_col_types = FALSE)
+
+## Electoral data
+electoral <- readr::read_csv(file.path(main_dir, "data", "IPEA_electoral_data.csv"), show_col_types = FALSE)
+
+## Municipality-level panel
+munidata_panel_election <- dplyr::left_join(munidata, electoral, by = "cod.2010") %>%
+  mutate(
+    Retirement_Years = dplyr::if_else(I_YEAR < election, I_YEAR - 1978, election - 1978
+    ),
+    Exposure = dplyr::if_else(JPIIAPT_YEAR < election, JPIIAPT_YEAR - 1978, election - 1978
+    ),
+    bish_age = AGEOCT78 + election - 1978,
+    experience = as.numeric(as.Date("1978-10-16") - as.Date(first_in_date_0)) / 365 + election - 1978
+  )
+
+## Data for maps
+munidata_panel_election_map <- munidata_panel_election %>%
+  filter(
+    election %in% c(1989, 1994, 1998, 2002),
+    cargo == "Presidente",
+    partido == "PT"
+  ) %>%
+  # aggregate at 1980 muni borders
+  group_by(CE_1978, I_YEAR, CE_TYPE, election, cod.1980_comp, partido, UF) %>%
+  summarise(
+    votos       = sum(votos, na.rm = TRUE),
+    votos.uteis = sum(votos.uteis, na.rm = TRUE),
+    votos.sum   = sum(votos.sum, na.rm = TRUE),
+    .groups     = "drop"
+  ) %>%
+  mutate(
+    votos_sh = votos / votos.uteis
+  ) %>%
+  rename(cod.1980 = cod.1980_comp)
+
+## Shapefiles
+### Municipalities
+munis_sf <- geobr::read_municipality(year = 1980) %>%
+  filter(!is.na(abbrev_state)) %>%
+  rename(cod.1980 = code_muni) %>%
+  select(-abbrev_state, -code_state, -name_muni) %>%
+  st_as_sf() %>%        
+  ms_simplify(keep = 0.1)
+
+### States
+# geobr::list_geobr()  # forces a fresh connection
+# options(geobr.cache = FALSE)
+ufs <- geobr::read_state(year = 1980) %>%
+  ms_simplify(keep = 0.5)
+
+df <- munis_sf %>%
+  left_join(munidata_panel_election_map, by = "cod.1980")
+
+# Set variables for the presidential elections
+years_main <- c(1989, 1994, 1998, 2002)
+
+# Import functions
+source("functions.R")
+```
+
+<div style="text-align: justify;">
+This report will reappraise the empirical research made by Professor Guadalupe Tuñón[^1]  in the paper “*How Progressive Bishops Supported the Workers’ Party in Brazil*”[^2]. The coming sections will simultaneously summarise, replicate, recognise the strengths and novelty, critique and improve the causal identification strategy used in this research.
+</div>
+
+# Research questions and main argument
+<div style="text-align: justify;">
+<p>
+This article tries to solve the following **research questions**: what are the effects of the ideological positioning of religious leaders on religion’s electoral impact, particularly of progressive religious leaders (i.e., leaders with redistributive beliefs and preferences) and their influence on electoral outcomes of left-wing parties in Brazil?  How this mechanism works through the mobilisation of parishioners by shaping collective action? How these effects vary across regions with different levels of presence of labour unions?
+</p>
+<p>
+To solve these questions, the **main argument of the author is that ideological leaning of progressive religious leaders affects religion’s electoral impact**. Herein, the mechanism consists of progressive religious leaders convincing parishioners to change their beliefs and preferences towards a moral and redistributive view of justice more aligned with left-wing parties.
+</p>
+<p>
+This argument is supported by the major findings of the paper suggesting that **increased voters’ exposure to progressive bishops who actively supported state-led redistribution had a positive effect on the electoral success of the left-wing Workers’ Party (*Partido dos Trabalhadores* [PT]) across different municipalities in Brazil**. These effects are heterogeneous depending on the strength of labour organisations over rural and urban areas.
+</p>
+</div>
+
+# Research design
+## A natural experiment
+<div style="text-align: justify;">
+<p>
+The author uses a natural experiment after the election of Pope John Paul II (JP-II) in 1978 who’s beliefs and preferences were more aligned with conservative values like opposing state-led redistribution and giving a welfare function to the church and charities. He had the authority to change all the bishops previously assigned by former Pope Paul VI (P-VI) after they finish their mandate due to death, resignation, transference or its formal end upon reaching the age of 75. Variation is as-if random for the moment of changing bishops from a progressive to a conservative one, and so for the length of exposure to the existent progressive Catholic bishops.
+</p>
+</div>
+
+## Unit of analysis
+<div style="text-align: justify;">
+<p>
+**The main unit of analysis *i* is the municipality** as electoral results are measured at the municipality-level, although treatment is assigned at the diocese-level. It is worth highlighting that the author treats equally diocese and territorial prelature. Although they are geographically similar territorial divisions, dioceses normally have more resources than prelatures possibly affecting the size of their effects. There are 145 dioceses and 44 territorial prelatures.
+</p>
+<p>
+Bishops’ datasets are a combination of compiled data from the Catholic Hierarchy website, the digitalisation of diocesan characteristics from the 1978 Catholic Church’s Annuario Pontificio, and geographical boundaries based on data of the Brazilian Institute of Geography and Statistics, and municipality-diocese mappings from the Brazilian Catholic Yearbooks.
+</p>
+</div>
+
+## The outcome variable: presidential vote share for the PT
+<div style="text-align: justify;">
+<p>
+**The outcome variable *Y* is the percentage of presidential vote share for the PT for each municipality** taken from the IPEA (2020)[^3]. [Figure 1](#fig1) shows the electoral territorial expansion for the presidential elections from 1989 to 2022 (i.e., the evolution of the outcome variable). To improve its readability in the legend the word percentage was included, and its numbers were transformed from decimals to whole numbers (See [Figure 1](#fig1)). On top of that, the year of municipality boundaries (1980) is incorporated in the supplementary note.
+</p>
+</div>
+
+### FIGURE 1. Territorial Expansion of the PT, 1989-2022 {#fig1}
+```{r figure1}
+#==============================#
+# FIGURE 1. Territorial Expansion of the PT, 1989–2002
+#==============================#
+save_pt_map(
+  years       = years_main,
+  dat         = df,
+  filename    = file.path(ddir, "Fig1.jpeg"),
+  var_fill    = "votos_sh",
+  legend_name = "Percentage of vote share PT",
+  scale = 100
+)
+
+knitr::include_graphics(file.path(ddir, "Fig1.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* The figure illustrates the growth in the PT’s vote share in Brazil’s first four direct presidential elections after the democratic transition, 1989-2002. Darker shades indicate higher vote shares. The black lines denote state borders. 1980 is the year of the municipality boundaries used.
+</small>
+</div>
+
+## An instrumental variable approach
+<div style="text-align: justify;">
+<p>
+The instrumental variable *Z* is the time left in office for a bishop to end its mandate, while the treatment *D* is the real time that was left to the bishop in office due to effective fulfilment of mandate, or unexpected situations like death, resignation or transfer. The mandated exposure time for each progressive bishop is calculated from 1978 (i.e., the baseline year when JP-II was appointed) until its retirement year as presented in [Figure 3](#fig3). A slightly small change was made in the legend of [Figure 3](#fig3) to include the unit of measurement of the mandated exposure which is years. 
+</p>
+</div>
+
+### FIGURE 3. Mandated exposure to Progressive Bishops, 1989-2022 {#fig3}
+```{r figure3}
+#==============================#
+# Figure 3: Mandated Exposure to Progressive Bishops, 1989-2022
+#==============================#
+
+plot_and_save_exposure_map(
+  df = df,
+  years_main = years_main,
+  legend_name = "Years of mandated exposure",
+  filename = file.path(ddir, "Fig3.jpeg")
+)
+
+knitr::include_graphics(file.path(ddir, "Fig3.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* The figure shows the values of mandated exposure for the year of each presidential election included in the analysis. Darker shades indicate exposure to a progressive bishop. Archdioceses - which are excluded from the main analysis - are shaded in black. The black lines denote state borders.
+</small>
+</div>
+
+## Relevance of the instrument
+<div style="text-align: justify;">
+<p>
+According to [Figure 2](#fig2), there is strong statistical evidence with yearly correlations close to 0.6 that **the mandated retirement (instrument) is associated with the length of the exposure to a progressive bishop (treatment)**. Furthermore, the F-statistics show statistical significance with values above 10 providing evidence to reject the null hypothesis that the coefficient of the instrument is equal to zero.
+</p>
+
+<p>
+Therefore, the selected instrument is relevant because it has its own source of variation which is predictive of the treatment.  It works because the age varies randomly without involvement of the Pope, and there is no anticipation of treatment as the election of the Pope is secret.
+</p>
+</div>
+
+### FIGURE 2. First Stage: Mandated and Observed Length of Exposure to a Progressive Bishop {#fig2}
+
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; a. Correlation &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;b. Main Estimate &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;c. F-Statistic
+
+```{r figure2}
+#| layout-ncol: 3
+
+#==============================#
+# FIGURE 2. First Stage: Mandated and Observed Length of Exposure to a Progressive Bishop
+#==============================#
+
+plot_and_save_first_stage(
+  df = diodata,
+  years_main = years_main,
+  Z = I_YEAR,
+  D = JPIIAPT_YEAR,
+  filename = file.path(ddir, "Fig2")
+)
+
+knitr::include_graphics(file.path(ddir, "Fig2A.jpeg"))
+knitr::include_graphics(file.path(ddir, "Fig2B.jpeg"))
+knitr::include_graphics(file.path(ddir, "Fig2C.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* The figure examines the strength of the first-stage relationship between the year of mandated retirement and the observed length of exposure to a progressive bishop. Panel a. shows a scatterplot of the raw variables – the year of mandated replacement and the year of the first JPII appointment for each diocese. The solid line marks the regression line, and the dashed line illustrates perfect compliance. Panel b. reports the main coefficients from the first-stage regression for each year between 1979 and 2015. Panel c. reports the corresponding F-statistic for each year. In panels b. and c. estimates for the years that are employed in the main analysis are highlighted in black.
+</small>
+</div>
+
+## Estimation: Intention-to-treat and two-stage least-squares
+<div style="text-align: justify;">
+<p>
+First, the paper **estimates the causal effects with the intention-to-treat (ITT)** using cross-sectional data of four presidential elections (i.e., 1989, 1994, 1998 and 2002) under the following specification:
+</p>
+
+$$
+Y_{i,d,s,t} = \beta_0 + \beta_1 \text{ Mandated Exposure}_{d,t} + \delta_s + \varepsilon_{i,d,s,t} \space \space
+$$ {#eq-1}
+
+<p>
+The outcome variable $Y_{i, d, s, t}$ is the percentage of presidential vote share for the PT for each municipality *i* located in diocese *d* in state *s* in year *t*. State-level fixed effects ($\gamma_s$) and standard errors ($\varepsilon_{i,d,s,t}$) are clustered at the diocese level. 
+</p>
+
+<p>
+After that, the author uses an **instrumental variable approach (IV)** to estimate how the mandated exposure to a progressive bishop affects the presidential vote share for the PT with the following two-stage least-squares (2SLS) model:
+</p>
+
+$$
+Y_{i,d,s,t} = \beta_0 + \beta_1 \text{ Exposure}_{d,t} + \delta_s + \varepsilon_{i,d,s,t} \space \space
+$$ {#eq-2}
+
+<p>
+The only term that changes in [Equation 2](#eq-2) in respect of [Equation 1](#eq-1) is that the explanatory variable is the predicted value of the first-stage regression of the Exposure ($D_{d, t}$) on the Mandated Exposure ($Z_{d, t}$).
+</p>
+</div>
+
+# Main findings
+<div style="text-align: justify;">
+<p>
+There is **strong and significant statistical evidence that the length of exposure to progressive bishops has a positive effect on the electoral outcomes of the PT** as shown in [Table 1](#tab1) consistent across the ITT and the 2SLS. A 1-year increase in exposure to a progressive bishop increases the presidential vote share of the PT at the municipal-level by 57.1% in 1989, 43.0% in 1994, 40.0% in 1998, and 23.5% in 2022. The decreasing tendency over the time (i.e., from 57.1% to 23.5%) could be related with newly assigned conservative bishops by JP-II that are reducing the overall exposure to progressive beliefs and preferences.
+</p>
+
+<p>
+These results are also consistent with the congressional vote share of the PT in 1994, 1998 and 2002 as reported by the author in Table C3 (i.e., a placebo outcome test), as well as using diocese as a unit of analysis in Table C1. Both are part of the supplementary material of the paper.
+</p>
+</div>
+
+### TABLE 1. Effects of the Length of Exposure to Progressive Bishops on the PT’s Presidential Vote Share {#tab1}
+```{r table1}
+#==============================#
+# Table 1:Effects of the Length of Exposure to Progressive Bishops on PT's Presidential Vote Share
+#==============================#
+
+# Main findings
+results_table1 <- run_itt_2sls(
+  data = munidata_panel_election %>%
+    filter(
+      partido == "PT",
+      cargo == "Presidente",
+      CE_TYPE != "A"
+      ),
+  y = "vote.sh",
+  D = "Exposure",
+  Z = "Retirement_Years",
+  fixed_effects = "UF",
+  clusters = "CE_1978",
+  years = years_main
+)
+
+# ITT
+ITT_table1  <- results_table1$itt
+# 2SLS
+CACE_table1 <- results_table1$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_table1,
+  cace_list  = CACE_table1,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "Table1"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "Table1.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors clustered at the 1978 diocese level in parentheses. In all models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+</div>
+
+<br>
+<div style="text-align: justify;">
+<p>
+The author **made a small mistake in the code and in [Table 1]{#tab1} while counting the number of observations** because she used nrow() instead of the $nobs column of the fitted model. She was counting the number of observations including missing values rather than the number observations used for the estimation (i.e., without missing values). This changes the number of observations of the presidential 1998 election from 4,493 to 4,489 (4 missing values).
+</p>
+</div>
+<br>
+
+```{r code-error1, echo = TRUE, eval = FALSE}
+# The author used:
+# n_obs = nrow(d)
+# Here is the change forthe number of observations from the fitted model
+# itt_list[[paste0(label, y)]]$nob
+```
+
+<br>
+
+<div style="text-align: justify;">
+<p>
+On the other hand, the paper analyses **heterogeneous effects** of the length of exposure to progressive bishops on the electoral outcomes of the PT **by urban and rural areas in [Figure 4](#fig4) for the 2002 presidential election.**
+</p>
+
+<p>
+The findings indicate that the **marginal effects** of the length of exposure to progressive bishops on the electoral outcomes of the PT **were bigger among voters that worked in the agriculture, fishing, and forestry sectors rather than in the manufacturing and construction sectors.** Thus religious leaders were mobilising voters where the labour unions had weaker presence.
+</p>
+</div>
+
+### FIGURE 4. Marginal Effects of the Length of Exposure to a Progressive Bishop on the PT's Vote Share {#fig4}
+
+```{r figure4}
+#==============================#
+# FIGURE 4. Marginal Effects of the Length of Exposure to a Progressive Bishop on the PT's Vote Share
+#==============================#
+
+fit_manufacturing <- interflex(
+  data = munidata_panel_election %>%
+    filter(
+      election == 2002,
+      cargo == "Presidente",
+      partido == "PT",
+      CE_TYPE != "A"
+      ) %>%
+        as.data.frame(),
+  estimator = "binning",
+  Y  = "vote.sh",         
+  D  = "Retirement_Years",
+  X  = 'shr_pob_Manufacturing_and_Construction',  
+  vcov.type = "cluster", 
+  cl = "CE_1978",
+  FE = "UF",
+  theme.bw = TRUE,
+  na.rm = TRUE
+  )
+
+fig_manufacturing <- plot(
+  fit_manufacturing,
+  theme.bw = TRUE,
+  cex.lab = 0,
+  cex.axis = .7,
+  cex.main = .65,
+  bin.labs = FALSE,
+  ylim = c(-.4, .75),
+  ylab = "",
+  xlab = ""
+  )
+
+fit_agriculture <- interflex(
+  data = munidata_panel_election %>%
+    filter(
+      election == 2002,
+      cargo == "Presidente",
+      partido == "PT",
+      CE_TYPE != "A"
+      ) %>%
+        as.data.frame(),
+  estimator = "binning",
+  Y  = "vote.sh",         
+  D  = "Retirement_Years",
+  X  = 'shr_pob_Agriculture_fishing_and_forestry',  
+  vcov.type = "cluster", 
+  cl = "CE_1978",
+  FE = "UF",
+  theme.bw = TRUE,
+  na.rm = TRUE
+  )
+  
+
+fig_agriculture <- plot(
+  fit_agriculture,
+  theme.bw = TRUE,
+  cex.lab = 0,
+  cex.axis = .7,
+  cex.main = .65,
+  bin.labs = FALSE,
+  ylim = c(-.4, .75),
+  ylab = "",
+  xlab = ""
+) 
+
+# Put figures together
+text1 <- textGrob("Share of workers in manufacturing and construction", gp = gpar(fontsize = 12), hjust= 0.5, vjust=.5)
+text2 <- textGrob("Share of workers in agriculture, fishing, and forestry", gp = gpar(fontsize = 12), hjust= 0.5, vjust=.5)
+text3 <- textGrob("Marginal effect of years of mandated\nexposure on 2002 PT vote share", gp = gpar(fontsize = 12), rot = 90, hjust= 0.5, vjust=.5)
+text4 <- textGrob("", gp = gpar(fontsize = 12))
+
+# Build the figure or grob object (no draw)
+figure_4 <- gridExtra::arrangeGrob(
+  text3,
+  fig_manufacturing,
+  fig_agriculture,
+  text4,
+  text1,
+  text2,
+  ncol = 3,
+  nrow = 2,
+  widths = c(1,10,10),
+  heights = c(8,1)
+)
+
+# Save figure (glob) as a JPEG file
+jpeg(
+  filename = file.path(ddir, "Fig4.jpeg"),
+  width    = 9,
+  height   = 4,
+  units    = "in",
+  res      = 300
+)
+grid::grid.draw(figure_4)
+invisible(dev.off())
+
+# Show figure
+knitr::include_graphics(file.path(ddir, "Fig4.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* The figures show that the electoral results benefits of longer exposure to progressive bishops were concentrated in municipalities where the PT could not rely on labour unions for mobilisation, as measured by the share of workers in manufacturing and construction (left) or agriculture fishing, and forestry (right). The dependent variable is the PT's vote share in 2002. The estimation follows the reduced-form intention-to-treat model in [Equation 1](#eq-1), adding each labour strength variable as a moderator. The unit of analysis is the municipality. Standard errors are clustered at the 1978 diocese level. All specifications include state fixed effects.
+</small>
+</div>
+<br>
+
+# Exclusion restriction assumption
+<div style="text-align: justify;">
+<p>
+The paper did **placebo treatment tests** to probe that the instrument of mandated exposure ($Z_{d,t}$) only affects elections through exposure ($D_{d,t}$) to progressive bishops **(i.e., the exclusion restriction assumption)**. It reported that **bishop's age and experience do not increase presidential vote share of the PT in [Table C4](#tabc4)**.
+</p>
+</div>
+
+### TABLE C4. Effects of Bishop Age and Experience on the PT’s Presidential Vote Share {#tabc4}
+
+```{r tablec4}
+#==============================#
+# TABLE C4. Effects of Bishop Age and Experience on the PT's Presidential Vote Share
+#==============================#
+
+# Get the ITTs of the placebo treatment variables
+placebo_treatment_tables(
+  data          = munidata_panel_election,
+  var_A         = "bish_age",
+  var_B         = "experience",
+  label_A       = "Bishop Age",
+  label_B       = "Bishop Experience",
+  panel_label_A = "Panel A: Bishop Age",
+  panel_label_B = "Panel B: Bishop Experience",
+  years         = years_main,
+  output_dir    = ddir,
+  file_name     = "TableC4"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "TableC4.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors are clustered at the 1978 diocese level in parentheses. In all the models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+</div>
+<br>
+<div style="text-align: justify;">
+<p>
+On the other hand, a **placebo outcome test** was held by changing the electoral results from the PT to the opposition to the dictatorship’s party during the 1976 elections in [Table B2](#tabb2). This shows that **the instrument affects the presidential share of the PT and does not affect an alternative outcome of a conservative party**.
+</p>
+
+<p>
+Notwithstanding, there is **small mistake in Table B2 of the supplementary material because the number of clusters reduced from 189 to 180 (i.e., 9 municipalities less)** as the number of observations decreased too.
+</p>
+</div>
+<br>
+
+### TABLE B2. Effects of the Length of Exposure to Progressive Bishops on the MDB’s 1976 Vote Share {#tabb2}
+
+```{r tableb2}
+#==============================#
+# Table B2: Effects of the Length of Exposure to Progressive Bishops on the MDB's 1976 Vote Share
+#==============================#
+
+# Placebo outcome test
+results_tableb2 <- run_itt_2sls(
+  data = munidata %>%
+    dplyr::left_join(electoral, by = "cod.2010") %>%
+    filter(
+      partido == "PT",
+      cargo == "Presidente",
+      CE_TYPE != "A",
+      !is.na(cod.1970)
+      ) %>%
+    mutate(
+      Retirement_Years = pmin(I_YEAR, election) - 1978,
+      Exposure = pmin(JPIIAPT_YEAR, election) - 1978
+    ),
+  y = "MDB1976_SH",
+  D = "Exposure",
+  Z = "Retirement_Years",
+  fixed_effects = "UF",
+  clusters = "CE_1978",
+  years = years_main,
+  label = "MDB vote "
+)
+
+# ITT
+ITT_tableb2  <- results_tableb2$itt
+# 2SLS
+CACE_tableb2 <- results_tableb2$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_tableb2,
+  cace_list  = CACE_tableb2,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "TableB2",
+  label = "MDB vote ",
+  title = "<b>Outcome: Opposition Vote Share in 1976</b>"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "TableB2.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors are clustered at the 1978 diocese level in parentheses. In all the models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+</div>
+<br>
+<div style="text-align: justify;">
+<p>
+**Finally, the instrument performs better when controlling for a pre-treatment covariate which is the *electoral base of 1976*, as presented in [Table 1B](#tab1b) of this reappraisal.** This strenghtens the exclusion restriction assumption in support of as-if random variation of the instrument when controlling for the electoral base (See [Table 1](#tab1) and [Table 1B](#tab1b)). The covariate was creating a backdoor path between Z and Y that does not goes through D. Controlling for it closes that path, so Z affects Y only through D conditionally.
+</p>
+</div>
+<br>
+
+### TABLE 1B. Effects of the Length of Exposure to Progressive Bishops on the PT’s Presidential Vote Share Controlling for the 1976 Electorate{#tab1b}
+```{r table1b}
+#==============================#
+# Table 1B:Effects of the Length of Exposure to Progressive Bishops on PT's Presidential Vote Share Controlling for the 1976 Electorate
+#==============================#
+
+results_table1b <- run_itt_2sls(
+  data = munidata_panel_election %>%
+    filter(
+      partido == "PT",
+      cargo == "Presidente",
+      CE_TYPE != "A"
+      ),
+  y = "vote.sh",
+  D = "Exposure",
+  Z = "Retirement_Years + ELEITORADO_1976",
+  fixed_effects = "UF",
+  clusters = "CE_1978",
+  years = years_main
+)
+
+# ITT
+ITT_table1b  <- results_table1b$itt
+# 2SLS
+CACE_table1b <- results_table1b$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_table1b,
+  cace_list  = CACE_table1b,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "Table1B"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "Table1B.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors clustered at the 1978 diocese level in parentheses. In all models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+</div>
+<br>
+
+# Archdioceses: a complementary placebo treatment test
+<div style="text-align: justify;">
+<p>
+This empirical research acknowledges that there is a **selection bias of bishops over archbishops**. To address this, the paper conducts a **placebo treatment test including archbishops in [Table C2](#tabc2) where the positive effect of progressive religious leaders on the presidential elections of the PT is statistically significant for the years 1994, 1998 and 2002**. Nonetheless, archdioceses were not studied individually but aggregated with existent dioceses and territorial prelatures.
+</p>
+</div>
+
+### TABLE C2. Effects of the Length of Exposure to Progressive Bishops on the PT’s Presidential Vote Share – Results Including Archdioceses, Dioceses and Territorial Prelatures {#tabc2}
+
+```{r tablec2}
+#==============================#
+# Appendix Table C2: Effects of the Length of Exposure to Progressive Bishops on the PT's Presidential Vote Share - Results Including Archdioceses, Dioceses abd Territorial Prelatures
+#==============================#
+
+# Placebo treatment test: Archiodeces, Dioceses and Territorial Prelatures
+results_tablec2 <- run_itt_2sls(
+  data = munidata_panel_election %>%
+    filter(
+      partido == "PT",
+      cargo == "Presidente"
+      ),
+  y = "vote.sh",
+  D = "Exposure",
+  Z = "Retirement_Years",
+  fixed_effects = "UF",
+  clusters = "CE_1978",
+  years = years_main
+)
+
+# ITT
+ITT_tablec2  <- results_tablec2$itt
+# 2SLS
+CACE_tablec2 <- results_tablec2$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_tablec2,
+  cace_list  = CACE_tablec2,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "TableC2"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "TableC2.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors clustered at the 1978 diocese level in parentheses. In all models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+</div>
+<br>
+<div style="text-align: justify;">
+<p>
+**When studying archdioceses alone the effects of exposure to progressive bishops are not conclusive on the electoral results of the PT according to the [Table C2B](#tabc2b) made in this reappraisal**. The exposure to progressive bishops in Archdioceses had a negative effect on the 1989 presidential election for the PT, while it helped it in 1994, and it had no impact at all for the other two presidential elections. **The statistical evidence is not conclusive or strong for archbishops to be part of the mechanism where ideological ideas and preferences of religious leaders influence voting behaviour**.
+</p>
+</div>
+<br>
+
+### TABLE C2B. Effects of the Length of Exposure to Progressive Bishops on the PT’s Presidential Vote Share – Results including Only Archdioceses {#tabc2b}
+
+```{r tablec2b}
+#==============================#
+# Appendix Table C2B: Effects of the Length of Exposure to Progressive Bishops on the PT's Presidential Vote Share - Results Including Only Archdioceses
+#==============================#
+
+# Placebo treatment test: Only Archiodeces
+results_tablec2b <- run_itt_2sls(
+  data = munidata_panel_election %>%
+    filter(
+      partido == "PT",
+      cargo == "Presidente",
+      CE_TYPE == "A"
+      ),
+  y = "vote.sh",
+  D = "Exposure",
+  Z = "Retirement_Years",
+  fixed_effects = "UF",
+  clusters = "CE_1978",
+  years = years_main
+)
+
+# ITT
+ITT_tablec2b  <- results_tablec2b$itt
+# 2SLS
+CACE_tablec2b <- results_tablec2b$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_tablec2b,
+  cace_list  = CACE_tablec2b,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "TableC2B"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "TableC2B.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors clustered at the 1978 archdiocese level in parentheses. In all models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+<br>
+</div>
+<br>
+
+<div style="text-align: justify;">
+<p>
+It could be the case that **archbishops’ bonds with local communities are not as strong as the ones of bishops reducing its power among parishioners**. An alternative explanation is that their location in urban centres reinforces the idea in the paper that **effects are [heterogeneous](#fig4) mostly concentrated in rural areas where labour unions presence is weak**.
+</p>
+
+<p>
+**This new placebo treatment test *provides evidence in favour* of the mechanism in which Popes exert an influence on parishioners’ voter behaviour with their local and rural religious leaders rather than great administrative or higher hierarchical units like archdioceses. *It falsifies* the idea that all types of religious leaders within the Catholic church serve for the religious impact on elections focusing on diverse channels for shaping collective action.**
+</p>
+</div>
+<br>
+
+# Monotonicity concerns: a new interpretation of results
+<div style="text-align: justify;">
+<p>
+According to [Figure B2](#figb2) non-compliance comes from bishops who resigned or where transferred meaning that **anticipation of quitting the treatment can occur when a progressive bishop is pressured to quit or change its location due to upward pressure**.
+</p>
+
+<p>
+At the same time, **some bishops remained some years in office after the mandate expected year because the age limit was not incorporated during their time of appointment. Its means that defiers and other unobserved confounders can exist**. This point goes beyond the mechanical compliance of mandated retirement showed with the dashed line of [Figure 2](#fig2) and in [Figure B2](#figb2). 
+</p>
+</div>
+<br>
+
+### FIGURE B2. Year of Retirement Age and JPII Bishop Replacements, By Type of Exit {#figb2}
+<br>
+
+```{r figureb2}
+#==============================#
+# Appendix Figure B2: Year of Retirement Age and JPII Bishop Replacements, By Type of Exit
+#==============================#
+
+diodata <- diodata %>%
+  mutate(out_method_0 = recode(out_method_0,
+                               "RETIREMENT" = "RETIRED",
+                               "DEATH"      = "DIED",
+                               "RESIGNATION"= "RESIGNED",
+                               "TRANSFER"   = "TRANSFERRED"))
+
+f_B2 <- diodata %>%
+  filter(CE_TYPE != "A") %>%
+  ggplot(aes(x = I_YEAR, y = JPIIAPT_YEAR)) +
+  geom_jitter(alpha = .4, width = .5, height = .5, size = 2, color = "grey60") +
+  geom_abline(intercept = 0, slope = 1, color = "black", linetype = "dashed", linewidth = .2) +
+  geom_smooth(method = lm, color = "black", se = FALSE, linewidth = .8) +
+  facet_wrap(~ out_method_0, ncol = 4) +
+  labs(x = "Year of Bishop's 75th Birthday/Death", y = "Year of Bishop's Replacement") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5))
+
+ggsave(file.path(ddir, "FigB2.jpeg"), f_B2, height = 2.25, width = 7.5, dpi = 1000)
+
+knitr::include_graphics(file.path(ddir, "FigB2.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* The figure shows the relationship between the year the sitting bishop vacancy was expected to occur when following the retirement rule (75th birthday/death, x-axis) and the date when the bishop was actually replaced (y-axis) by the reason that triggered the exit of the sitting bishop—his death, resignation, retirement, or transfer. The solid line marks the correlation between the two variables. The dashed line illustrates perfect compliance.
+</small>
+<br>
+</div>
+<br>
+
+<div style="text-align: justify;">
+<p>
+On the other hand, **the author assumes that bishops who were in office prior to the appointment of JP-II in 1978 were progressive, while those bishops assigned by JP-II were conservative**. This is a raising concern because some conservative bishops could be assigned before P-VI by prior Popes like John XXIII or Pius XII, as well as some progressive bishops could be appointed by JP-II due to political quotas, personal favours or other important individual characteristics. Furthermore, there could be cases where JP-II assigned progressive bishops changing the real time of exposure.
+</p>
+
+<p>
+Although the author removes conservative bishops according to two intelligence reports of the SNI of 1976 and 1981 for the analysis in Table C7 in the supplementary material, it is still including bishops with undefined political and moderate political ideologies. Therefore, **[Table C7B](#tabc7b) is made in this reappraisal to see the effects of only the progressive bishops (i.e., the ones that have a progressive ideology) on the presidential vote share of the PT.**
+</p>
+</div>
+<br>
+
+### TABLE C7B. Robustness to only Progressive pre-JPII Bishops {#tabc7b}
+```{r tablec7b}
+#==============================#
+# TABLE C7B. Robustness to only Progressive pre-JPII Bishops
+#==============================#
+
+# Only progressive pope appointees
+results_muni_only_progressive <- run_itt_2sls(
+  data          = filter(munidata_panel_election, 
+    apt_pope_0 %in% c("JOHN XXIII", "PAUL VI") &
+    partido == "PT" &
+    cargo == "Presidente" &
+    CE_TYPE!="A" &
+    (type_AAA_76 == "REFORMISTA-PASTORALISTA" |
+    type_AAA_76 == "REFORMISTA-PROGRESSISTA" |
+    type_AAA_81 == "PROGRESSISTA RADICAL")
+  ),
+  y             = "vote.sh",
+  D             = "Exposure",
+  Z             = "Retirement_Years",
+  fixed_effects = "UF",
+  clusters      = "CE_1978",
+  years         = years_main
+)
+
+# ITT
+ITT_muni_only_progressive  <- results_muni_only_progressive$itt
+# 2SLS
+CACE_muni_only_progressive <- results_muni_only_progressive$cace
+
+# Save table
+make_itt_2sls_table(
+  itt_list   = ITT_muni_only_progressive,
+  cace_list  = CACE_muni_only_progressive,
+  years      = years_main,
+  output_dir = ddir,
+  file_name  = "TableC7B"
+)
+
+# Show table
+knitr::include_graphics(file.path(ddir, "TableC7B.jpeg"))
+```
+
+<div style="text-align: justify;">
+<small>
+*Note:* Standard errors clustered at the 1978 diocese level in parentheses. In all models, the unit of analysis is the municipality. All specifications are estimated using ordinary least squares (ITT) and 2SLS (CACE) and include state fixed effects.
+
++ p < 0.1, * p < 0.05, ** p < 0.01
+</small>
+<br>
+</div>
+<br>
+
+<div style="text-align: justify;">
+<p>
+**The resulting effects in [Table C7B](#tabc7b) without holding the main assumption of the author (i.e., all bishops before JP-II appointment were progressive) invalidate the main findings interpretation**. There is not enough statistical evidence to support that there is an effect of only progressive bishops in the electoral outcomes of the PT. This changes the main interpretation of the findings supporting that **there is an effect of the time of exposure of the bishops appointed by Popes before JP-II on the electoral results of the PT, but not necessarily from only progressive bishops.**
+</p>
+
+<p>
+**The mechanism holds where religious leaders influence on the beliefs and preferences of the parishioners. So indeed, Church voted left, but it is not as direct as we can expect.** It could be the case that high inequality and poverty during the 80s and 90s encouraged more people to support the PT aligning undefined, moderate and even some conservative bishops with these ideas to attract parishioners and empathise with their grievances.
+</p>
+</div>
+<br>
+
+# Conclusions
+<div style="text-align: justify;">
+<p>
+**The methodological contribution of this paper** consists of measuring causal effects by using novel historic data from archives, administrative records and spatial boundaries.
+</p>
+
+<p>
+This empirical research expands the Latin American politics literature by providing evidence that the influence of religion on electoral outcomes is not only in conservative leanings, but it also has an influence on progressive electoral results. **It highlights how religious leaders serve as a channel between religious institutions and ideological preferences which affects domestic political behaviour.**
+</p>
+
+<p>
+**Notwithstanding, the mechanism which shapes collective action towards the left is not easily traceable.** It is more plausible that all bishops - rather than archbishops and progressive bishops exclusively - are part of the pathways for changing voting behaviour in support of left-wing parties after reappraising this empirical research.
+</p>
+</div>
+
+<br>
+
+# Code appendix
+```{r ref.label = knitr::all_labels(), echo=TRUE, eval=FALSE}
+# this chunk generates the complete code appendix.
+# eval=FALSE tells R not to re-run (``evaluate'') the code here.
+
+
+
+```
+
+
+[^1]: Guadalupe Tuñón is an Assistant Professor of the Department of Politics and School of Public and International Affairs at Princeton University, United States.
+
+[^2]: Tuñón, G., 2026. When the church votes left: How progressive bishops supported the workers’ party in
+brazil. *American Political Science Review*.
+
+[^3]: IPEA, 2020. *Eleições Presidenciais—Votos por Município*. http://www.ipeadata.gov.br/
